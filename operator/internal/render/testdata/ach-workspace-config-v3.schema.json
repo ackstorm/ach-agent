@@ -77,6 +77,13 @@
           },
           "title": "Skills",
           "type": "array"
+        },
+        "instructions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Instructions",
+          "type": "array"
         }
       },
       "title": "AchCapabilityFilterExclude",

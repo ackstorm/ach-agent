@@ -16,6 +16,9 @@ type ExcludeSpec struct {
 	McpServers []string `json:"mcpServers,omitempty"`
 	// +optional
 	Skills []string `json:"skills,omitempty"`
+	// Instructions lists ACH Environment instructions the agent does not get.
+	// +optional
+	Instructions []string `json:"instructions,omitempty"`
 }
 
 // IncludeSpec is the allow list of the capability filter (config: capability.filter.include).

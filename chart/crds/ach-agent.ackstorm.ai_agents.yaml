@@ -917,6 +917,12 @@ spec:
                     description: 'ExcludeSpec is the governance gate ABOVE the model
                       (config: capability.filter.exclude).'
                     properties:
+                      instructions:
+                        description: Instructions lists ACH Environment instructions
+                          the agent does not get.
+                        items:
+                          type: string
+                        type: array
                       mcpServers:
                         items:
                           type: string

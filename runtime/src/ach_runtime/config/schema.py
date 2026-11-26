@@ -118,6 +118,7 @@ class AchCapabilityFilterExclude(BaseModel):
     tools: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list, alias="mcpServers")
     skills: list[str] = Field(default_factory=list)
+    instructions: list[str] = Field(default_factory=list)
 
 
 class AchCapabilityFilterInclude(BaseModel):

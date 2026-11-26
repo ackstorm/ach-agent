@@ -64,6 +64,8 @@ type WSExcludeBlock struct {
 	Tools      []string `json:"tools"`
 	McpServers []string `json:"mcpServers"`
 	Skills     []string `json:"skills"`
+	// Rendered only when set, like include, so an Agent without it keeps its configVersion.
+	Instructions []string `json:"instructions,omitempty"`
 }
 
 // emptyIfNil normalizes a nil exclusion slice to an empty (non-null) one: the vendored
@@ -85,7 +87,7 @@ func renderFilterV1(f *v1.FilterSpec) WSFilterBlock {
 	if f != nil && f.Exclude != nil {
 		e = *f.Exclude
 	}
-	out := WSFilterBlock{Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills)}}
+	out := WSFilterBlock{Exclude: WSExcludeBlock{Tools: emptyIfNil(e.Tools), McpServers: emptyIfNil(e.McpServers), Skills: emptyIfNil(e.Skills), Instructions: e.Instructions}}
 	if f != nil && f.Include != nil {
 		out.Include = &WSIncludeBlock{Tools: emptyIfNil(f.Include.Tools)}
 	}

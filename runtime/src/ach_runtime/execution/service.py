@@ -173,6 +173,16 @@ def _build_fixture_invocation(
         resolved_system_prompt = _resolve_system_prompt(
             public.prompt, workspace_dir / ".ach-state"
         )
+    # An Environment's instructions follow the agent's prompt, by name, as ach-cli adds them.
+    instructions = "\n\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((workspace_dir / ".ach-state" / "instructions").glob("*/*"))
+        if path.is_file()
+    )
+    if instructions:
+        text = system_prompt is not None and system_prompt.type == "text"
+        persona = system_prompt.text if text else resolved_system_prompt
+        resolved_system_prompt = f"{persona}\n\n{instructions}" if persona else instructions
 
     return EngineInvocation(
         invocation_id=request.invocation_id,

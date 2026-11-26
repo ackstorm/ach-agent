@@ -112,6 +112,7 @@ class _ContextBlock(BaseModel):
     prompts: list[ContextItem] = Field(default_factory=list)
     artifacts: list[ContextItem] = Field(default_factory=list)
     plugins: list[PluginItem] = Field(default_factory=list)
+    instructions: list[ContextItem] = Field(default_factory=list)
 
 
 class HydrationManifest(BaseModel):
@@ -349,6 +350,7 @@ class HydratedCatalog:
     artifacts: tuple[ContextItem, ...]
     a2a_agents: tuple[A2AAgentEntry, ...] = ()
     plugins: tuple[PluginItem, ...] = ()
+    instructions: tuple[ContextItem, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +428,7 @@ class Hydrator:
             artifacts=tuple(manifest.context.artifacts),
             a2a_agents=tuple(manifest.runtime.a2a_agents),
             plugins=tuple(manifest.context.plugins),
+            instructions=tuple(manifest.context.instructions),
         )
 
 
@@ -434,6 +437,7 @@ async def stage_context(
     root: "Path",
     *,
     excluded_skills: Iterable[str],
+    excluded_instructions: Iterable[str] = (),
     client: httpx.AsyncClient,
 ) -> None:
     """Download authorized context into the legacy on-disk skills/prompts layout; `client` carries the ACH credential (KeyAuth)."""
@@ -444,13 +448,14 @@ async def stage_context(
 
     root.mkdir(parents=True, exist_ok=True)
     excluded = set(excluded_skills)
-    for kind in ("skills", "prompts", "artifacts", "plugins"):
+    excluded_by_kind = {"skills": excluded, "instructions": set(excluded_instructions)}
+    for kind in ("skills", "prompts", "artifacts", "plugins", "instructions"):
         items = getattr(catalog, kind)
         for item in items:
+            if item.name in excluded_by_kind.get(kind, ()):
+                continue
             if kind == "plugins" and item.delivery == "native":
                 log.warning("plugin %s uses native delivery, which an agent does not load: not installed", item.name)
-                continue
-            if kind == "skills" and item.name in excluded:
                 continue
             if not item.download_url:
                 continue

@@ -401,6 +401,7 @@ The `capability` block replaces the `ach` block and the root `model`:
 - A header value is `{"env": NAME}` (a secret, resolved only by the control role; a missing value fails assembly) or `{"value": "..."}` (a literal, not a secret). Only env-derived values are redacted from logs and run records.
 - Header names are unique case-insensitively per endpoint. Reserved names are rejected: `host`, `content-length`, `transfer-encoding`, `connection`, `traceparent`, `tracestate`, `x-litellm-session-id`, `x-litellm-trace-id`, `x-ach-*` and `langfuse_*`.
 - `filter.exclude.skills` requires `server` `ach`.
+- `filter.exclude.instructions` names ACH Environment instructions the agent does not get; the rest follow the system prompt, sorted by name, separated by blank lines.
 - With `server` `standalone`, `memory.achMemory.auth.type` cannot be `ach`, and `memory.achMemory.mcpServerId` must name a `capability.standalone.mcpServers` entry.
 
 ## 8. Amendments to v1

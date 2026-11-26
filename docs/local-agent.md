@@ -26,10 +26,11 @@ FROM ${ACH_AGENT_IMAGE}
 
 ## Authoring flow
 
-1. Create an ACH environment in the Hub with the MCPs, skills, plugins, prompts and artifacts the agent
-   needs. From a plugin the agent gets only its skills, named `<plugin>-<skill>` as `ach-cli hydrate`
-   names them for opencode and pi; a plugin's MCP servers must be in the environment too, and a
-   native-delivery plugin is skipped.
+1. Create an ACH environment in the Hub with the MCPs, skills, plugins, instructions, prompts and
+   artifacts the agent needs. From a plugin the agent gets only its skills, named `<plugin>-<skill>` as
+   `ach-cli hydrate` names them for opencode and pi; a plugin's MCP servers must be in the environment
+   too, and a native-delivery plugin is skipped. The environment's instructions follow the agent's
+   prompt, sorted by name; `filter.exclude.instructions` drops one by name.
 2. Get a credential for it: `ach-cli login`, or an `ek-` key in `ACH_KEY` (see Credentials).
 3. Write `agent.yaml` and, optionally, its prompt (`AGENTS.md`).
 4. `cd` into the directory the agent works on, then run `ach-agent run --config <path>/agent.yaml`. Without
@@ -188,7 +189,7 @@ model: {name: qwen3-coder, api: openai, baseUrl: "http://host.docker.internal:11
 | `prompt.system` (`type`: `text`, `file`, `ach`) | no | none | `prompt.system`; a file is read and sent as text |
 | `prompt.compose` | no | `append` | `prompt.compose` |
 | `filter.include` (`tools`) | no | nothing | `capability.filter.include` |
-| `filter.exclude` (`mcpServers`, `tools`, `skills`) | no | nothing | `capability.filter.exclude` |
+| `filter.exclude` (`mcpServers`, `tools`, `skills`, `instructions`) | no | nothing | `capability.filter.exclude` |
 | `engine.type` (`opencode` or `pi`) | no | `opencode` | `engine.type` |
 | `engine.denyTools` | no | none | `engine.denyTools` |
 | `limits` (any wire `limits` key, e.g. `maxSteps`, `maxInvocationSeconds`) | no | `maxSteps: 50`, `maxInvocationSeconds: 600` | `limits` |

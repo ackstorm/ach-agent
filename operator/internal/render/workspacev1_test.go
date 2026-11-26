@@ -303,6 +303,27 @@ func TestRenderFilterV1_PartialFilterEmitsEmptyArraysNotNull(t *testing.T) {
 	}
 }
 
+// An Agent that excludes no instructions renders no exclude.instructions key, so upgrading the
+// operator keeps its configVersion; one that does renders the list.
+func TestRenderFilterV1_InstructionsRenderOnlyWhenSet(t *testing.T) {
+	for _, tc := range []struct {
+		spec *v1.FilterSpec
+		want string
+	}{
+		{nil, `{"tools":[],"mcpServers":[],"skills":[]}`},
+		{&v1.FilterSpec{Exclude: &v1.ExcludeSpec{Instructions: []string{"people-only"}}},
+			`{"tools":[],"mcpServers":[],"skills":[],"instructions":["people-only"]}`},
+	} {
+		b, err := json.Marshal(renderFilterV1(tc.spec).Exclude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != tc.want {
+			t.Errorf("exclude = %s, want %s", b, tc.want)
+		}
+	}
+}
+
 // TestRenderHandoffV1_MissingForwardEnvNameErrors is the Important review finding 6
 // regression: a forwardEnv name absent from the merged environment must fail closed, not
 // silently vanish from the rendered handoff block.

@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- An agent gets the instructions of its ACH Environment (`context.instructions`): they follow the agent's system
+  prompt, whatever its source, sorted by name and separated by blank lines, as `ach-cli hydrate` adds them for a
+  person. `filter.exclude.instructions` (Agent CR `spec.filter.exclude.instructions`) drops one by name, for an
+  Environment shared with people. Upgrade: apply the chart's CRDs before setting it.
+
 ## [0.8.5] - 2026-11-26
 
 ### Added

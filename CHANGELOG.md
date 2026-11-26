@@ -10,9 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - OpenShell 0.1.10: the e2e cluster and `docs/install.md`. The chart moved to
-  `oci://quay.io/ai-openshell/charts/openshell` and its images to `quay.io/ai-openshell`; a release of the old
-  `helm-chart` upgrades in place. The chart turns gateway service routing off by default, and ach-agent reaches
-  every sandbox through it: an OpenShell 0.1.10 install must set
+  `oci://quay.io/ai-openshell/charts/openshell` and its images to `quay.io/ai-openshell`. The chart turns gateway
+  service routing off by default, and ach-agent reaches every sandbox through it: an OpenShell 0.1.10 install must set
   `gatewayConfig."openshell.gateway".enable_gateway_service_routing: true`, or every run fails. 0.1.10 adds no
   database migration, so going back to 0.1.9 is a chart revert.
 

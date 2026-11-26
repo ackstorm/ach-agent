@@ -58,7 +58,7 @@ Label every Agent namespace `istio.io/dataplane-mode=ambient`.
 ## 5. Operator
 
 ```bash
-helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.8.4 \
+helm install ach-agent oci://ghcr.io/ackstorm/charts/ach-agent --version 0.8.5 \
   -n ach-agent-system --create-namespace \
   --set openshell.gateway=http://openshell.openshell.svc.cluster.local:8080
 ```
@@ -333,11 +333,11 @@ kind: AgentProfile
 metadata: {name: default, namespace: demo}
 spec:
   control:
-    image: ghcr.io/ackstorm/ach-agent-control:0.8.4
+    image: ghcr.io/ackstorm/ach-agent-control:0.8.5
     terminationGracePeriodSeconds: 60
   sandbox:
     openshell:
-      image: ghcr.io/ackstorm/ach-agent-execution:0.8.4
+      image: ghcr.io/ackstorm/ach-agent-execution:0.8.5
       resources: {cpu: 500m, memory: 1Gi}
       readyTimeoutSeconds: 180
   defaults:
@@ -369,7 +369,7 @@ config and the rules the controller reports as conditions (for example the grace
 `kubectl apply --dry-run=server`.
 
 ```bash
-cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.8.4 validate -f -
+cat profile.yaml agent.yaml | docker run --rm -i ghcr.io/ackstorm/ach-agent-operator:0.8.5 validate -f -
 ```
 
 ### Engine

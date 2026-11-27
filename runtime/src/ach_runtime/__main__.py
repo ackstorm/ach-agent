@@ -21,6 +21,9 @@ def _parser() -> argparse.ArgumentParser:
     execution.add_argument("--sessions-root", type=Path, default=Path("/sandbox/ach/sessions"))
     control = commands.add_parser("control", help="run the Harness control process")
     control.add_argument("--config", type=Path, default=Path("/etc/ach-runtime/config.json"))
+    proxy = commands.add_parser("credential-proxy", help="run a HermesAgent's ACH credential proxy (env-configured)")
+    proxy.add_argument("--host", default="0.0.0.0")
+    proxy.add_argument("--port", type=int, default=8080)
     agent = commands.add_parser("agent", help="run the whole agent in one process (not for production)")
     agent.add_argument("--config", type=Path, required=True)
     agent.add_argument("--host", default="0.0.0.0")
@@ -58,6 +61,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ach_runtime.harness.boot import run_control
 
         asyncio.run(run_control(args.config))
+    elif args.command == "credential-proxy":
+        from ach_runtime.harness.credential_proxy import run_credential_proxy
+
+        run_credential_proxy(args.host, args.port)
     elif args.command == "agent":
         from ach_runtime.harness.agent import run_agent
 

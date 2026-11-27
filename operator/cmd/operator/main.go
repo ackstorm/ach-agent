@@ -168,6 +168,13 @@ func main() {
 		setupLog.Error(err, "register Agent controller")
 		os.Exit(1)
 	}
+	if err := (&controller.HermesAgentReconciler{
+		Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme(),
+		Sandboxes: sandboxes, SandboxNamespace: sandboxes.Config.PodNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "register HermesAgent controller")
+		os.Exit(1)
+	}
 	if err := mgr.Add(runner); err != nil {
 		setupLog.Error(err, "register host runner")
 		os.Exit(1)

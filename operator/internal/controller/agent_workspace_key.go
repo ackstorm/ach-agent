@@ -12,7 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	achv1alpha1 "github.com/ackstorm/ach-agent/operator/api/v1alpha1"
@@ -30,14 +32,21 @@ func workspaceKeySecretName(uid string) string { return host.KeySecretName(uid) 
 var errKeySecretConflict = errors.New("workspace key Secret conflict")
 
 func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1.Agent) error {
-	key := types.NamespacedName{Namespace: a.Namespace, Name: workspaceKeySecretName(string(a.UID))}
+	return ensureKeySecret(ctx, r.Client, r.APIReader, r.Scheme, a, achAgentOwnerKind, agentLabels(a))
+}
+
+// ensureKeySecret is ensureWorkspaceKey for any owner: the UID-named key Secret, created once and
+// never updated, controlled by owner (of kind).
+func ensureKeySecret(ctx context.Context, c client.Client, reader client.Reader, scheme *runtime.Scheme,
+	owner client.Object, kind string, labels map[string]string) error {
+	key := types.NamespacedName{Namespace: owner.GetNamespace(), Name: workspaceKeySecretName(string(owner.GetUID()))}
 	readAndValidate := func() error {
 		var existing corev1.Secret
-		if err := r.APIReader.Get(ctx, key, &existing); err != nil {
+		if err := reader.Get(ctx, key, &existing); err != nil {
 			return err
 		}
-		if !workspaceKeyOwnedBy(&existing, a) {
-			return fmt.Errorf("%w: not controlled by this Agent", errKeySecretConflict)
+		if !keyOwnedBy(&existing, owner, kind) {
+			return fmt.Errorf("%w: not controlled by this %s", errKeySecretConflict, kind)
 		}
 		if len(existing.Data[workspaceKeyDataKey]) == 0 {
 			return fmt.Errorf("%w: no nonempty key", errKeySecretConflict)
@@ -55,14 +64,14 @@ func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1
 		return fmt.Errorf("generate workspace key: %w", err)
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: a.Namespace, Labels: agentLabels(a)},
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{workspaceKeyDataKey: []byte(hex.EncodeToString(raw))},
 	}
-	if err := controllerutil.SetControllerReference(a, secret, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(owner, secret, scheme); err != nil {
 		return fmt.Errorf("set workspace key owner: %w", err)
 	}
-	if err := r.Client.Create(ctx, secret); err != nil {
+	if err := c.Create(ctx, secret); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			// A concurrent reconcile won creation. Read and validate that exact object;
 			// never overwrite it or generate a replacement in place.
@@ -77,8 +86,12 @@ func (r *AgentReconciler) ensureWorkspaceKey(ctx context.Context, a *achv1alpha1
 }
 
 func workspaceKeyOwnedBy(secret *corev1.Secret, a *achv1alpha1.Agent) bool {
+	return keyOwnedBy(secret, a, achAgentOwnerKind)
+}
+
+func keyOwnedBy(secret *corev1.Secret, owner client.Object, kind string) bool {
 	for _, ref := range secret.OwnerReferences {
-		if ref.Controller != nil && *ref.Controller && ref.UID == a.UID && ref.Name == a.Name && ref.Kind == achAgentOwnerKind && ref.APIVersion == achv1alpha1.GroupVersion.String() {
+		if ref.Controller != nil && *ref.Controller && ref.UID == owner.GetUID() && ref.Name == owner.GetName() && ref.Kind == kind && ref.APIVersion == achv1alpha1.GroupVersion.String() {
 			return true
 		}
 	}

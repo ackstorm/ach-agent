@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `HermesAgent` (experimental): runs [Hermes Agent](https://github.com/NousResearch/hermes-agent) (`hermes gateway
+  run`) as a long-running OpenShell sandbox with a PVC for its memory, skills, sessions and cron jobs, and its
+  messaging platforms (Telegram, Slack, ...) from `spec.secretRef`. A per-agent credential proxy
+  (`ach-runtime credential-proxy`) holds the ACH credential (`ach.keyFrom` as on an Agent) and forwards Hermes'
+  `/v1` and `/mcp` calls; no ACH credential enters the sandbox. Needs the OpenShell gateway mTLS. See
+  `docs/hermes-agent.md`.
+
 ## [0.8.8] - 2026-11-27
 
 ### Changed

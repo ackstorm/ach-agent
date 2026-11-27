@@ -1,7 +1,7 @@
 # ach-agent
 
 ## Layout
-- `operator/` Go module: Agent/AgentProfile CRDs, controller, render, OpenShell backend.
+- `operator/` Go module: Agent/AgentProfile CRDs, controller, render, OpenShell backend; HermesAgent CRD (`docs/hermes-agent.md`).
 - `runtime/` Python package `ach_runtime` (control and execution roles), distribution `ach-agent-runtime`. Two engines, `engine.type` `opencode` (default, `execution` image) and `pi` (PiG at `/opt/pi/pig`, `execution-pi` image); they differ as `docs/local-agent.md#engines` lists.
 - `runtime/bin/ach-agent` + `ach-runtime run`: local agent from a YAML manifest in the current directory, engine TUI attached (`docs/local-agent.md`).
 - `chart/` Helm chart (operator, CRDs, RBAC, Secret admission policy, a SeaweedFS storage server per Agent namespace with its scripts in `chart/files/storage/`); `make chart-test`, `make storage-smoke` (docker).

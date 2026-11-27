@@ -115,7 +115,11 @@ _SECRET = re.compile(
 
 def _failure_reason(exc: BaseException, limit: int = 300) -> str:
     """'<ExcType>: <message>' with credential-looking text redacted and length capped."""
-    text = _SECRET.sub(lambda m: m.group(1) or "[redacted]", f"{type(exc).__name__}: {exc}")
+    return _safe_reason(f"{type(exc).__name__}: {exc}", limit)
+
+
+def _safe_reason(text: str, limit: int) -> str:
+    text = _SECRET.sub(lambda m: m.group(1) or "[redacted]", text)
     return text if len(text) <= limit else text[:limit] + "..."
 
 
@@ -1170,6 +1174,15 @@ class Control:
             outcome=outcome or (status.state if status is not None else "unknown"),
             usage=usage,
         ))
+        if status is not None and status.state == "failed" and status.error:
+            # The completion record carries no free text; the reason gets its own line, in the
+            # message because the control process prints only the message text.
+            reason = _safe_reason(status.error, 500)
+            log.warning(
+                "run failed: %s (channel %s, event %s)",
+                reason, expected.channel, event.event_id if event is not None else None,
+                extra={"invocation_id": expected.invocation_id, "reason": reason},
+            )
 
     def begin_stopping(self) -> None:
         """Mark the control as stopping: no retry, resume, observing read or delivery for runs

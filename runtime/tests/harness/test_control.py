@@ -2827,6 +2827,48 @@ async def test_start_failure_reason_reaches_real_control_log_output(monkeypatch,
     assert secret not in err
 
 
+def test_failed_run_reason_reaches_real_control_log_output(monkeypatch, capsys) -> None:
+    import logging
+
+    import ach_runtime.observability as observability
+    from ach_runtime.config.public import public_config
+    from ach_runtime.execution.wire import RunStatus
+    from ach_runtime.observability.runs import configure_logging
+
+    config = _config()
+    control = Control.__new__(Control)
+    control.config = config
+    control.public = public_config(config, config.engine.env)
+    monkeypatch.setattr(observability, "record_run", lambda _record: None)
+    secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+
+    def status(state, error=None):
+        return RunStatus(
+            invocationId="inv-opaque", channel="tick", workspaceRef="a" * 64, sessionRef="b" * 64,
+            runId="run-opaque", configVersion=config.config_version,
+            deadlineAt=datetime.now(timezone.utc), state=state, error=error,
+        )
+
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    for handler in saved:
+        root.removeHandler(handler)
+    try:
+        configure_logging()
+        capsys.readouterr()
+        failed = status("failed", f"sessionStart exited 1: 422 for Bearer {secret} " + "x" * 600)
+        control._record_run(failed, failed, failed.run_id, None)
+        done = status("completed")
+        control._record_run(done, done, done.run_id, None)
+    finally:
+        root.handlers[:] = saved
+    err = capsys.readouterr().err
+    assert "run failed: sessionStart exited 1: 422 for" in err
+    assert "(channel tick, event None)" in err
+    assert secret not in err and "x" * 501 not in err
+    assert err.count("run failed") == 1
+
+
 async def test_observe_run_backs_off_for_long_runs_and_resets_on_state_change(monkeypatch) -> None:
     from ach_runtime.harness import control as control_module
 

@@ -439,7 +439,7 @@ func (b *openShellUnits) Create(ctx context.Context, a *achv1alpha1.Agent, p *ac
 		if len(b.Config.CA) == 0 {
 			return errVolumeNeedsTLS
 		}
-		claim, err := b.ensureVolume(ctx, a, persist.Volume, w.Name)
+		claim, err := b.ensureVolume(ctx, a.Name, persist.Volume, w.Name)
 		if err != nil {
 			return err
 		}

@@ -74,6 +74,11 @@ func appendUnique(dst []string, add ...string) []string {
 // reserves, then adds the reserved rules: the facade egress rule, the runtime paths and the
 // landlock default.
 func BuildPolicy(profile, agent *apiextensionsv1.JSON, facadeHost string, facadePort uint32) (*ostypes.SandboxPolicy, error) {
+	return buildPolicy(profile, agent, facadeHost, facadePort, runtimeBinaries)
+}
+
+// buildPolicy is BuildPolicy with the binaries the reserved facade rule admits.
+func buildPolicy(profile, agent *apiextensionsv1.JSON, facadeHost string, facadePort uint32, binaries []string) (*ostypes.SandboxPolicy, error) {
 	merged, err := decode(profile)
 	if err != nil {
 		return nil, err
@@ -157,8 +162,8 @@ func BuildPolicy(profile, agent *apiextensionsv1.JSON, facadeHost string, facade
 	if merged.Landlock == nil || merged.Landlock.Compatibility == "" {
 		merged.Landlock = &ostypes.LandlockPolicy{Compatibility: "hard_requirement"}
 	}
-	bins := make([]ostypes.PolicyNetworkBinary, 0, len(runtimeBinaries))
-	for _, b := range runtimeBinaries {
+	bins := make([]ostypes.PolicyNetworkBinary, 0, len(binaries))
+	for _, b := range binaries {
 		bins = append(bins, ostypes.PolicyNetworkBinary{Path: b})
 	}
 	merged.NetworkPolicies[reservedPrefix+"facades"] = ostypes.NetworkPolicyRule{

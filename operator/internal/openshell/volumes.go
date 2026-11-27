@@ -66,7 +66,7 @@ func driverConfig(claim string) map[string]any {
 
 // ensureVolume returns the Workspace's PVC, created on its first sandbox and reused after, and
 // clears its detached-at mark. A PVC being deleted is not reused: the create is retried.
-func (b *openShellUnits) ensureVolume(ctx context.Context, a *achv1alpha1.Agent, v *achv1alpha1.WorkspaceVolumeSpec, workspace string) (string, error) {
+func (b *openShellUnits) ensureVolume(ctx context.Context, owner string, v *achv1alpha1.WorkspaceVolumeSpec, workspace string) (string, error) {
 	name := VolumeName(string(b.uid), workspace)
 	var pvc corev1.PersistentVolumeClaim
 	err := b.reader.Get(ctx, client.ObjectKey{Namespace: b.Config.PodNamespace, Name: name}, &pvc)
@@ -79,7 +79,7 @@ func (b *openShellUnits) ensureVolume(ctx context.Context, a *achv1alpha1.Agent,
 		pvc = corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: b.Config.PodNamespace, Labels: map[string]string{
 				attachableLabel: "true", attachableWorkspaceLabel: b.Config.Workspace,
-				AgentLabel: a.Name, AgentUIDLabel: string(b.uid),
+				AgentLabel: owner, AgentUIDLabel: string(b.uid),
 			}},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{mode},

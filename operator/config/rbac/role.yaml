@@ -56,6 +56,7 @@ rules:
   - ach-agent.ackstorm.ai
   resources:
   - agents
+  - hermesagents
   verbs:
   - get
   - list
@@ -66,12 +67,14 @@ rules:
   - ach-agent.ackstorm.ai
   resources:
   - agents/finalizers
+  - hermesagents/finalizers
   verbs:
   - update
 - apiGroups:
   - ach-agent.ackstorm.ai
   resources:
   - agents/status
+  - hermesagents/status
   verbs:
   - get
   - patch

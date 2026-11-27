@@ -1,0 +1,311 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: hermesagents.ach-agent.ackstorm.ai
+spec:
+  group: ach-agent.ackstorm.ai
+  names:
+    kind: HermesAgent
+    listKind: HermesAgentList
+    plural: hermesagents
+    singular: hermesagent
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].reason
+      name: Reason
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HermesAgentSpec runs NousResearch Hermes Agent (`hermes gateway run`) as a long-running
+              OpenShell sandbox. Its model and MCP calls go through a credential proxy, so no ACH credential
+              enters the sandbox.
+            properties:
+              ach:
+                description: |-
+                  HermesAchSpec is where a HermesAgent's ACH credential comes from. The field names and rules are
+                  the Agent's (AchServerSpec) without its capability fields: Hermes' own config names its models
+                  and MCP servers.
+                properties:
+                  baseUrl:
+                    description: BaseURL is ACH's public URL. With tokenExchange it
+                      is also the projected token's audience.
+                    pattern: ^https?://[^/\s]+
+                    type: string
+                  environment:
+                    description: Environment is the ACH Environment the credential
+                      acts in.
+                    minLength: 1
+                    type: string
+                  keyFrom:
+                    description: |-
+                      AchKeyFrom is where the ACH credential comes from: exactly one of tokenExchange or
+                      secretKeyRef.
+                    properties:
+                      secretKeyRef:
+                        description: SecretKeyRef is a Secret holding a static ek_.
+                        properties:
+                          key:
+                            description: Key is the data key inside the Secret.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: Name is the Kubernetes Secret name.
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      tokenExchange:
+                        description: |-
+                          AchTokenExchange exchanges the control pod's projected ServiceAccount token for a
+                          short-lived ACH credential. ACH issues it only when a KeyGrant names this identity, the
+                          Environment and the pod's control ServiceAccount as <namespace>/<serviceaccount>.
+                        properties:
+                          identity:
+                            description: Identity is the ACH identity (an email) the
+                              credential acts as.
+                            pattern: ^[^@\s*?\[\]]+@[^@\s*?\[\]]+$
+                            type: string
+                        required:
+                        - identity
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: 'ach.keyFrom: set exactly one of tokenExchange or secretKeyRef'
+                      rule: has(self.tokenExchange) != has(self.secretKeyRef)
+                required:
+                - baseUrl
+                - environment
+                - keyFrom
+                type: object
+                x-kubernetes-validations:
+                - message: ach.baseUrl must be https:// with keyFrom.tokenExchange
+                  rule: '!has(self.keyFrom.tokenExchange) || self.baseUrl.startsWith(''https://'')'
+              config:
+                description: |-
+                  Config is Hermes' config.yaml, written to its home at every sandbox start (Hermes' own
+                  edits to it do not survive a restart). It reaches the proxy through ${ACH_PROXY_URL} and
+                  ${ACH_PROXY_TOKEN}, which Hermes expands.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              persistence:
+                description: 'HermesPersistenceSpec is the PVC that holds Hermes''
+                  home: memory, skills, sessions, cron jobs.'
+                properties:
+                  volume:
+                    description: |-
+                      WorkspaceVolumeSpec is the PVC the operator creates per Workspace for persistence type volume,
+                      in the sandbox pod namespace, mounted read-write at /sandbox/ach. Its StorageClass must have
+                      reclaimPolicy Delete (deleting the Agent then deletes the volumes) and give uid/gid 10001
+                      write access.
+                    properties:
+                      accessMode:
+                        description: AccessMode of new Workspace PVCs; empty is ReadWriteOnce.
+                        enum:
+                        - ReadWriteOnce
+                        - ReadWriteMany
+                        type: string
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          Size is the PVC request of Workspace PVCs created after it is set; existing PVCs keep
+                          their size.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClassName:
+                        description: |-
+                          StorageClassName applies to Workspace PVCs created after it is set; empty is the
+                          cluster's default class.
+                        type: string
+                    required:
+                    - size
+                    type: object
+                required:
+                - volume
+                type: object
+              proxy:
+                description: HermesProxySpec is the per-HermesAgent pod that holds
+                  the ACH credential.
+                properties:
+                  image:
+                    description: Image is the ach-agent control image; the proxy runs
+                      `ach-runtime credential-proxy`.
+                    minLength: 1
+                    type: string
+                required:
+                - image
+                type: object
+              sandbox:
+                description: |-
+                  ProfileSandboxSpec selects the sandbox. OpenShell is the only one; another sandbox later
+                  becomes a sibling block.
+                properties:
+                  openshell:
+                    description: OpenShellSpec is the OpenShell sandbox every Workspace
+                      of the profile's Agents runs in.
+                    properties:
+                      image:
+                        minLength: 1
+                        type: string
+                      policy:
+                        description: |-
+                          Policy is the OpenShell sandbox policy (snake_case proto JSON), merged under the
+                          Agent's own policy. Rule names starting with ach-agent- are reserved.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      readyTimeoutSeconds:
+                        description: |-
+                          ReadyTimeoutSeconds is how long a new sandbox has to become ready, rendered as the
+                          control config's workspace.readyTimeoutSeconds. Omitted: the runtime default.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: SandboxResources maps onto the OpenShell sandbox
+                          template resources.
+                        properties:
+                          cpu:
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            type: string
+                          ephemeralStorage:
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            type: string
+                          memory:
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            type: string
+                        type: object
+                    required:
+                    - image
+                    type: object
+                required:
+                - openshell
+                type: object
+              secretRef:
+                description: |-
+                  SecretRef names a Secret whose keys reach Hermes as environment variables
+                  (TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN, ...).
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName runs the proxy pod; with tokenExchange the KeyGrant names it as
+                  <namespace>/<serviceAccountName>.
+                minLength: 1
+                type: string
+            required:
+            - ach
+            - config
+            - persistence
+            - proxy
+            - sandbox
+            - serviceAccountName
+            type: object
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

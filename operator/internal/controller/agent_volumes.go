@@ -13,32 +13,26 @@ import (
 	"github.com/ackstorm/ach-agent/operator/internal/openshell"
 )
 
-// workspaceVolumes lists the Agent's Workspace PVCs (persistence type volume, created by the
-// host loop in the sandbox namespace), uncached.
-func (r *AgentReconciler) workspaceVolumes(ctx context.Context, a *achv1alpha1.Agent) ([]corev1.PersistentVolumeClaim, error) {
-	var pvcs corev1.PersistentVolumeClaimList
-	if err := r.APIReader.List(ctx, &pvcs, client.InNamespace(r.SandboxNamespace),
-		client.MatchingLabels{openshell.AgentUIDLabel: string(a.UID)}); err != nil {
-		return nil, fmt.Errorf("list Workspace PVCs of %s: %w", a.Name, err)
-	}
-	return pvcs.Items, nil
-}
-
 // removeWorkspaceVolumes deletes the Agent's Workspace PVCs, which live in the sandbox namespace
 // and so carry no owner reference, and reports whether any is left (a PVC stays until the last
 // pod using it is gone).
 func (r *AgentReconciler) removeWorkspaceVolumes(ctx context.Context, a *achv1alpha1.Agent) (bool, error) {
-	if r.SandboxNamespace == "" {
+	return removeVolumes(ctx, r.APIReader, r.Client, r.SandboxNamespace, string(a.UID))
+}
+
+// removeVolumes is removeWorkspaceVolumes for any owner UID.
+func removeVolumes(ctx context.Context, reader client.Reader, c client.Client, ns, uid string) (bool, error) {
+	if ns == "" {
 		return false, nil
 	}
-	pvcs, err := r.workspaceVolumes(ctx, a)
-	if err != nil {
-		return false, err
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := reader.List(ctx, &pvcs, client.InNamespace(ns), client.MatchingLabels{openshell.AgentUIDLabel: uid}); err != nil {
+		return false, fmt.Errorf("list Workspace PVCs of %s: %w", uid, err)
 	}
-	for i := range pvcs {
-		if err := r.Delete(ctx, &pvcs[i]); client.IgnoreNotFound(err) != nil {
-			return false, fmt.Errorf("delete Workspace PVC %s: %w", pvcs[i].Name, err)
+	for i := range pvcs.Items {
+		if err := c.Delete(ctx, &pvcs.Items[i]); client.IgnoreNotFound(err) != nil {
+			return false, fmt.Errorf("delete Workspace PVC %s: %w", pvcs.Items[i].Name, err)
 		}
 	}
-	return len(pvcs) > 0, nil
+	return len(pvcs.Items) > 0, nil
 }

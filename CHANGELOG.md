@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `HermesAgent` is hydrated from its ACH Environment, as an Agent is: `spec.ach.model.name` picks the model, and at
+  every sandbox start the credential proxy renders Hermes' `config.yaml` (model, the Environment's MCP servers,
+  `skills.external_dirs`, the Environment's instructions as `agent.system_prompt`) and its skills, plugins as skills.
+  `spec.config` is optional and holds only Hermes settings; the keys ACH writes are rewritten every start. Breaking
+  for the experimental `v1alpha1` HermesAgent: `spec.ach.model` is required, and a `spec.config` written for 0.8.9
+  (`${ACH_PROXY_URL}`, `${ACH_PROXY_TOKEN}`) is no longer needed.
+
 ## [0.8.9] - 2026-11-27
 
 ### Added

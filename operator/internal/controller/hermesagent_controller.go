@@ -77,16 +77,21 @@ func (r *HermesAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := ensureKeySecret(ctx, r.Client, r.APIReader, r.Scheme, &h, hermesOwnerKind, hermesLabels(&h)); err != nil {
 		return r.status(ctx, &h, "KeySecretFailed", err.Error())
 	}
+	userConfig, err := hermesUserConfig(&h)
+	if err != nil {
+		return r.status(ctx, &h, "InvalidConfig", err.Error())
+	}
 	env, err := r.sandboxEnv(ctx, &h)
 	if err != nil {
 		return r.status(ctx, &h, "SecretsUnresolved", err.Error())
 	}
-	sts, err := r.applyProxy(ctx, &h)
+	sts, err := r.applyProxy(ctx, &h, userConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	sum := sha256.New()
-	_ = json.NewEncoder(sum).Encode([]any{env, h.Spec.Sandbox.OpenShell})
+	// The bundle is fetched at sandbox start: a change to what it renders from replaces the sandbox.
+	_ = json.NewEncoder(sum).Encode([]any{env, h.Spec.Sandbox.OpenShell, h.Spec.Ach, h.Spec.Config})
 	ready, phase, err := r.Sandboxes.EnsureHermes(ctx, r.APIReader, r.Client, openshell.HermesSandbox{
 		Owner: client.ObjectKeyFromObject(&h), UID: h.UID, OpenShell: h.Spec.Sandbox.OpenShell,
 		Volume: h.Spec.Persistence.Volume, Env: env,
@@ -110,14 +115,9 @@ func hermesProxyHost(h *achv1alpha1.HermesAgent) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", hermesProxyName(h), h.Namespace)
 }
 
-// sandboxEnv is everything Hermes gets: its config, its home, the proxy and its bearer, and
-// every key of spec.secretRef. Secret values are part of the spec hash, so a rotated token
-// replaces the sandbox.
+// sandboxEnv is everything Hermes gets: its home, the proxy and its bearer, and every key of
+// spec.secretRef. Secret values are part of the spec hash, so a rotated token replaces the sandbox.
 func (r *HermesAgentReconciler) sandboxEnv(ctx context.Context, h *achv1alpha1.HermesAgent) (map[string]string, error) {
-	var cfg bytes.Buffer
-	if err := json.Compact(&cfg, h.Spec.Config.Raw); err != nil {
-		return nil, fmt.Errorf("spec.config: %w", err)
-	}
 	env := map[string]string{}
 	if ref := h.Spec.SecretRef; ref != nil {
 		var s corev1.Secret
@@ -133,7 +133,6 @@ func (r *HermesAgentReconciler) sandboxEnv(ctx context.Context, h *achv1alpha1.H
 		return nil, err
 	}
 	maps.Copy(env, map[string]string{
-		"HERMES_CONFIG":   cfg.String(),
 		"HERMES_HOME":     openshell.HermesHome,
 		"HOME":            hermesUserHome,
 		"ACH_PROXY_URL":   fmt.Sprintf("http://%s:%d", hermesProxyHost(h), hermesProxyPort),
@@ -142,14 +141,26 @@ func (r *HermesAgentReconciler) sandboxEnv(ctx context.Context, h *achv1alpha1.H
 	return env, nil
 }
 
-func (r *HermesAgentReconciler) applyProxy(ctx context.Context, h *achv1alpha1.HermesAgent) (*appsv1.StatefulSet, error) {
+// hermesUserConfig is spec.config as compact JSON for the proxy, "{}" when unset.
+func hermesUserConfig(h *achv1alpha1.HermesAgent) (string, error) {
+	if h.Spec.Config == nil || len(h.Spec.Config.Raw) == 0 {
+		return "{}", nil
+	}
+	var cfg bytes.Buffer
+	if err := json.Compact(&cfg, h.Spec.Config.Raw); err != nil {
+		return "", fmt.Errorf("spec.config: %w", err)
+	}
+	return cfg.String(), nil
+}
+
+func (r *HermesAgentReconciler) applyProxy(ctx context.Context, h *achv1alpha1.HermesAgent, userConfig string) (*appsv1.StatefulSet, error) {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: hermesProxyName(h), Namespace: h.Namespace, Labels: hermesLabels(h)},
 		Spec: corev1.ServiceSpec{Selector: hermesLabels(h), Ports: []corev1.ServicePort{{
 			Name: "http", Port: hermesProxyPort, TargetPort: intstr.FromInt32(hermesProxyPort),
 		}}},
 	}
-	sts := buildHermesProxy(h)
+	sts := buildHermesProxy(h, userConfig)
 	for _, desired := range []client.Object{svc, sts} {
 		existing := desired.DeepCopyObject().(client.Object)
 		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
@@ -165,7 +176,7 @@ func (r *HermesAgentReconciler) applyProxy(ctx context.Context, h *achv1alpha1.H
 	return sts, nil
 }
 
-func buildHermesProxy(h *achv1alpha1.HermesAgent) *appsv1.StatefulSet {
+func buildHermesProxy(h *achv1alpha1.HermesAgent, userConfig string) *appsv1.StatefulSet {
 	one, uid := int32(1), agentUID
 	falseVal, trueVal := false, true
 	secretEnv := func(name, secret, key string) corev1.EnvVar {
@@ -176,6 +187,8 @@ func buildHermesProxy(h *achv1alpha1.HermesAgent) *appsv1.StatefulSet {
 		{Name: "ACH_BASE_URL", Value: h.Spec.Ach.BaseURL},
 		{Name: "ACH_ENVIRONMENT", Value: h.Spec.Ach.Environment},
 		{Name: "ACH_AGENT_NAME", Value: h.Name},
+		{Name: "HERMES_MODEL", Value: h.Spec.Ach.Model.Name},
+		{Name: "HERMES_CONFIG", Value: userConfig},
 		secretEnv(hermesProxyBearer, workspaceKeySecretName(string(h.UID)), workspaceKeyDataKey),
 	}
 	volumes := []corev1.Volume{{Name: tmpVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}

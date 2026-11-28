@@ -53,9 +53,9 @@ spec:
             properties:
               ach:
                 description: |-
-                  HermesAchSpec is where a HermesAgent's ACH credential comes from. The field names and rules are
-                  the Agent's (AchServerSpec) without its capability fields: Hermes' own config names its models
-                  and MCP servers.
+                  HermesAchSpec is the HermesAgent's ACH Environment and credential, with the Agent's field names
+                  and rules (AchServerSpec). The credential proxy hydrates the Environment into Hermes' config:
+                  the model, the MCP servers, the skills (plugins as skills) and the instructions.
                 properties:
                   baseUrl:
                     description: BaseURL is ACH's public URL. With tokenExchange it
@@ -105,19 +105,30 @@ spec:
                     x-kubernetes-validations:
                     - message: 'ach.keyFrom: set exactly one of tokenExchange or secretKeyRef'
                       rule: has(self.tokenExchange) != has(self.secretKeyRef)
+                  model:
+                    description: HermesModelSpec is the Environment model Hermes uses,
+                      over the OpenAI wire.
+                    properties:
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
                 required:
                 - baseUrl
                 - environment
                 - keyFrom
+                - model
                 type: object
                 x-kubernetes-validations:
                 - message: ach.baseUrl must be https:// with keyFrom.tokenExchange
                   rule: '!has(self.keyFrom.tokenExchange) || self.baseUrl.startsWith(''https://'')'
               config:
                 description: |-
-                  Config is Hermes' config.yaml, written to its home at every sandbox start (Hermes' own
-                  edits to it do not survive a restart). It reaches the proxy through ${ACH_PROXY_URL} and
-                  ${ACH_PROXY_TOKEN}, which Hermes expands.
+                  Config is Hermes-only config.yaml settings. At every sandbox start the keys ACH owns (model,
+                  the Environment's MCP servers, skills.external_dirs, agent.system_prompt when the Environment
+                  has instructions) are set on top of it; edits Hermes makes to config.yaml do not survive.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
               persistence:
@@ -233,7 +244,6 @@ spec:
                 type: string
             required:
             - ach
-            - config
             - persistence
             - proxy
             - sandbox

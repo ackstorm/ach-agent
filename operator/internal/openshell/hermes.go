@@ -22,9 +22,15 @@ const (
 	hermesBinaries = "/opt/hermes/**"
 	hermesUnit     = "hermes"
 	specHashLabel  = "runtime.ach-agent.ackstorm.ai/spec-hash"
-	// hermesCommand bypasses the image's /init, which exits for any uid but root and 10000.
-	// The gateway refuses newlines in env values: HERMES_CONFIG is single-line JSON (valid YAML).
-	hermesCommand = `mkdir -p "$HERMES_HOME" "$HOME" && printf '%s' "$HERMES_CONFIG" > "$HERMES_HOME/config.yaml" && exec /opt/hermes/.venv/bin/hermes gateway run`
+	// hermesCommand bypasses the image's /init, which exits for any uid but root and 10000. It
+	// downloads the hydrated config.yaml and ach-skills/ from the credential proxy with Hermes' own
+	// interpreter (the one binary the reserved rule admits), then starts the gateway; a failed
+	// download exits and the gateway restarts the sandbox.
+	hermesCommand = `rm -rf "$HERMES_HOME/ach-skills" && mkdir -p "$HERMES_HOME" "$HOME" && ` +
+		`/opt/hermes/.venv/bin/python -c "import os,io,tarfile,urllib.request as u; ` +
+		`r=u.Request(os.environ['ACH_PROXY_URL']+'/hermes/bundle', headers={'Authorization':'Bearer '+os.environ['ACH_PROXY_TOKEN']}); ` +
+		`tarfile.open(fileobj=io.BytesIO(u.urlopen(r,timeout=120).read())).extractall(os.environ['HERMES_HOME'], filter='data')" && ` +
+		`exec /opt/hermes/.venv/bin/hermes gateway run`
 )
 
 // HermesSandbox is one HermesAgent's long-running sandbox.

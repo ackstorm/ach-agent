@@ -5,6 +5,7 @@ package openshell
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	ostypes "github.com/ai-openshell/sdk-go/openshell/v1/types"
@@ -21,7 +22,7 @@ func TestEnsureHermes_CreatesWithPVCAndProxyRuleThenReplacesOnHashChange(t *test
 		Owner: types.NamespacedName{Namespace: "ach", Name: "hermes"}, UID: "uid-h",
 		OpenShell: achv1alpha1.OpenShellSpec{Image: "hermes:1"},
 		Volume:    achv1alpha1.WorkspaceVolumeSpec{Size: resource.MustParse("1Gi")},
-		Env:       map[string]string{"HERMES_CONFIG": "{}"},
+		Env:       map[string]string{"HOME": "/sandbox/ach/home"},
 		ProxyHost: "hermes-hermes.ach.svc.cluster.local", ProxyPort: 8081, Hash: "h1",
 	}
 	if _, _, err := f.o.EnsureHermes(ctx, f.c, f.c, h); !errors.Is(err, errVolumeNeedsTLS) {
@@ -41,6 +42,9 @@ func TestEnsureHermes_CreatesWithPVCAndProxyRuleThenReplacesOnHashChange(t *test
 	if len(rule.Endpoints) != 1 || rule.Endpoints[0].Host != h.ProxyHost || rule.Endpoints[0].Port != 8081 ||
 		len(rule.Binaries) != 1 || rule.Binaries[0].Path != hermesBinaries {
 		t.Fatalf("reserved rule = %+v", rule)
+	}
+	if cmd := s.Spec.Command; len(cmd) != 3 || !strings.Contains(cmd[2], "/hermes/bundle") || !strings.HasSuffix(cmd[2], "hermes gateway run") {
+		t.Fatalf("command = %q", cmd)
 	}
 	if s.Spec.Template.DriverConfig == nil {
 		t.Fatal("no PVC mount in driver_config")

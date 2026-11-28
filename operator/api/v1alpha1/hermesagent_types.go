@@ -7,9 +7,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// HermesAchSpec is where a HermesAgent's ACH credential comes from. The field names and rules are
-// the Agent's (AchServerSpec) without its capability fields: Hermes' own config names its models
-// and MCP servers.
+// HermesAchSpec is the HermesAgent's ACH Environment and credential, with the Agent's field names
+// and rules (AchServerSpec). The credential proxy hydrates the Environment into Hermes' config:
+// the model, the MCP servers, the skills (plugins as skills) and the instructions.
 // +kubebuilder:validation:XValidation:rule="!has(self.keyFrom.tokenExchange) || self.baseUrl.startsWith('https://')",message="ach.baseUrl must be https:// with keyFrom.tokenExchange"
 type HermesAchSpec struct {
 	// BaseURL is ACH's public URL. With tokenExchange it is also the projected token's audience.
@@ -22,6 +22,15 @@ type HermesAchSpec struct {
 	Environment string `json:"environment"`
 	// +kubebuilder:validation:Required
 	KeyFrom AchKeyFrom `json:"keyFrom"`
+	// +kubebuilder:validation:Required
+	Model HermesModelSpec `json:"model"`
+}
+
+// HermesModelSpec is the Environment model Hermes uses, over the OpenAI wire.
+type HermesModelSpec struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // HermesPersistenceSpec is the PVC that holds Hermes' home: memory, skills, sessions, cron jobs.
@@ -51,14 +60,14 @@ type HermesAgentSpec struct {
 	ServiceAccountName string `json:"serviceAccountName"`
 	// +kubebuilder:validation:Required
 	Proxy HermesProxySpec `json:"proxy"`
-	// Config is Hermes' config.yaml, written to its home at every sandbox start (Hermes' own
-	// edits to it do not survive a restart). It reaches the proxy through ${ACH_PROXY_URL} and
-	// ${ACH_PROXY_TOKEN}, which Hermes expands.
-	// +kubebuilder:validation:Required
+	// Config is Hermes-only config.yaml settings. At every sandbox start the keys ACH owns (model,
+	// the Environment's MCP servers, skills.external_dirs, agent.system_prompt when the Environment
+	// has instructions) are set on top of it; edits Hermes makes to config.yaml do not survive.
+	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Schemaless
 	// +kubebuilder:validation:Type=object
-	Config apiextensionsv1.JSON `json:"config"`
+	Config *apiextensionsv1.JSON `json:"config,omitempty"`
 	// SecretRef names a Secret whose keys reach Hermes as environment variables
 	// (TELEGRAM_BOT_TOKEN, SLACK_BOT_TOKEN, ...).
 	// +optional

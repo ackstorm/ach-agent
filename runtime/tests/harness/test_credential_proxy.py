@@ -28,3 +28,67 @@ async def test_proxy_swaps_bearer_for_ach_key_and_refuses_others() -> None:
     sent = seen[0].headers
     assert sent["x-ach-key"] == "ek_test" and "authorization" not in sent
     assert (sent["x-ach-agent"], sent["x-ach-environment"]) == ("hermes", "search")
+
+
+def _tar_gz(files: dict[str, str]) -> bytes:
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+async def test_bundle_hydrates_config_skills_and_instructions_from_the_environment() -> None:
+    import io
+    import json
+    import tarfile
+
+    manifest = {
+        "environment": "agent-hermes",
+        "runtime": {"models": [{"id": "ackstorm.smart", "endpoint": "https://ach.example/v1"}],
+                    "mcpServers": [{"id": "mcp-serper", "endpoint": "https://ach.example/mcp/mcp-serper"},
+                                   {"id": "elsewhere", "endpoint": "https://other.example/mcp/x"}]},
+        "context": {"skills": [{"name": "s1", "downloadUrl": "https://ach.example/dl/s1"}],
+                    "instructions": [{"name": "rules", "downloadUrl": "https://ach.example/dl/rules"}]},
+    }
+
+    def ach(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-ach-key"] == "ek_test"
+        if request.url.path == "/platform/hydrate":
+            return httpx.Response(200, json=manifest)
+        if request.url.path == "/v2/model/info":
+            return httpx.Response(200, json={"data": [{"model_name": "ackstorm.smart", "model_info": {"max_input_tokens": 400000}}]})
+        if request.url.path == "/dl/s1":
+            return httpx.Response(200, content=_tar_gz({"SKILL.md": "---\nname: s1\n---\nhi"}))
+        if request.url.path == "/dl/rules":
+            return httpx.Response(200, content=_tar_gz({"RULES.md": "Answer in Spanish."}))
+        raise AssertionError(request.url.path)
+
+    keys = KeySource("ek_test")
+    app = create_proxy_app("https://ach.example", keys, "b", ProcessIdentity(agent="hermes", environment="agent-hermes"),
+                           httpx.AsyncClient(transport=httpx.MockTransport(ach)), model="ackstorm.smart",
+                           user_config={"model": {"default": "ignored", "max_tokens": 8192},
+                                        "mcp_servers": {"mine": {"url": "https://mine.example/mcp"}}},
+                           ach_client=httpx.AsyncClient(transport=httpx.MockTransport(ach), auth=keys.auth))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://proxy") as client:
+        denied = await client.get("/hermes/bundle")
+        response = await client.get("/hermes/bundle", headers={"Authorization": "Bearer b"})
+
+    assert denied.status_code == 401 and response.status_code == 200
+    tar = tarfile.open(fileobj=io.BytesIO(response.content))
+    config = json.loads(tar.extractfile("config.yaml").read())
+    assert config["model"] == {"default": "ackstorm.smart", "max_tokens": 8192, "provider": "custom",
+                               "base_url": "${ACH_PROXY_URL}/v1", "api_key": "${ACH_PROXY_TOKEN}", "context_length": 400000}
+    assert config["mcp_servers"] == {
+        "mine": {"url": "https://mine.example/mcp"},
+        "mcp-serper": {"url": "${ACH_PROXY_URL}/mcp/mcp-serper", "headers": {"Authorization": "Bearer ${ACH_PROXY_TOKEN}"}},
+    }
+    assert config["skills"]["external_dirs"] == ["${HERMES_HOME}/ach-skills"]
+    assert config["agent"]["system_prompt"] == "Answer in Spanish."
+    assert tar.extractfile("ach-skills/s1/SKILL.md").read().startswith(b"---\nname: s1")

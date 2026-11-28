@@ -43,7 +43,7 @@ func TestEnsureHermes_CreatesWithPVCAndProxyRuleThenReplacesOnHashChange(t *test
 		len(rule.Binaries) != 1 || rule.Binaries[0].Path != hermesBinaries {
 		t.Fatalf("reserved rule = %+v", rule)
 	}
-	if cmd := s.Spec.Command; len(cmd) != 3 || !strings.Contains(cmd[2], "/hermes/bundle") || !strings.HasSuffix(cmd[2], "hermes gateway run") {
+	if cmd := s.Spec.Command; len(cmd) != 3 || !strings.Contains(cmd[2], "/hermes/bundle") || !strings.Contains(cmd[2], ".ach/start.py") || !strings.HasSuffix(cmd[2], "hermes gateway run") {
 		t.Fatalf("command = %q", cmd)
 	}
 	if s.Spec.Template.DriverConfig == nil {

@@ -53,7 +53,8 @@ async def test_bundle_hydrates_config_skills_and_instructions_from_the_environme
         "environment": "agent-hermes",
         "runtime": {"models": [{"id": "ackstorm.smart", "endpoint": "https://ach.example/v1"}],
                     "mcpServers": [{"id": "mcp-serper", "endpoint": "https://ach.example/mcp/mcp-serper"},
-                                   {"id": "elsewhere", "endpoint": "https://other.example/mcp/x"}]},
+                                   {"id": "elsewhere", "endpoint": "https://other.example/mcp/x"}],
+                    "a2aAgents": [{"id": "aws-devops", "endpoint": "https://ach.example/a2a/aws-devops"}]},
         "context": {"skills": [{"name": "s1", "downloadUrl": "https://ach.example/dl/s1"}],
                     "instructions": [{"name": "rules", "downloadUrl": "https://ach.example/dl/rules"}]},
     }
@@ -88,7 +89,35 @@ async def test_bundle_hydrates_config_skills_and_instructions_from_the_environme
     assert config["mcp_servers"] == {
         "mine": {"url": "https://mine.example/mcp"},
         "mcp-serper": {"url": "${ACH_PROXY_URL}/mcp/mcp-serper", "headers": {"Authorization": "Bearer ${ACH_PROXY_TOKEN}"}},
+        "aws-devops": {"url": "${ACH_PROXY_URL}/a2a/aws-devops/mcp", "headers": {"Authorization": "Bearer ${ACH_PROXY_TOKEN}"}},
     }
     assert config["skills"]["external_dirs"] == ["${HERMES_HOME}/ach-skills"]
-    assert config["agent"]["system_prompt"] == "Answer in Spanish."
+    assert "agent" not in config
+    assert tar.extractfile(".ach/instructions.md").read() == b"## rules\n\nAnswer in Spanish."
+    assert b"def merge_soul" in tar.extractfile(".ach/start.py").read()
     assert tar.extractfile("ach-skills/s1/SKILL.md").read().startswith(b"---\nname: s1")
+
+
+def test_merge_soul_keeps_the_rest_and_rewrites_only_the_ach_block() -> None:
+    from ach_runtime.harness.hermes_start import BEGIN, END, merge_soul
+
+    first = merge_soul("You are Hermes.\n", "## rules\n\nAnswer in Spanish.")
+    assert first == f"You are Hermes.\n\n{BEGIN}\n## rules\n\nAnswer in Spanish.\n{END}\n"
+    edited = first + "\nA line the user added.\n"
+    second = merge_soul(edited, "## tone\n\nBe brief.")
+    assert second == f"You are Hermes.\n\nA line the user added.\n\n{BEGIN}\n## tone\n\nBe brief.\n{END}\n"
+    assert merge_soul(second, "") == "You are Hermes.\n\nA line the user added.\n"
+
+
+def test_start_script_seeds_hermes_default_only_when_instructions_exist(tmp_path, monkeypatch) -> None:
+    from ach_runtime.harness import hermes_start
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setattr(hermes_start, "_hermes_default_soul", lambda: "You are Hermes Agent.")
+    hermes_start.main()
+    assert not (tmp_path / "SOUL.md").exists()
+    (tmp_path / ".ach").mkdir()
+    (tmp_path / ".ach" / "instructions.md").write_text("## rules\n\nX")
+    hermes_start.main()
+    soul = (tmp_path / "SOUL.md").read_text()
+    assert soul.startswith("You are Hermes Agent.\n\n<!-- ach:instructions") and "## rules\n\nX" in soul

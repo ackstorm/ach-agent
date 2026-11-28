@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `HermesAgent`: the Environment's A2A agents reach Hermes as MCP servers at ACH's `/a2a/<agent>/mcp`, through the
+  credential proxy. The Environment's instructions go into a rewritten block of Hermes' `SOUL.md`, one section per
+  instruction, instead of `agent.system_prompt`: Hermes loads `SOUL.md` for cron jobs too, and a personality chosen
+  from chat no longer replaces them.
+
 ## [0.8.10] - 2026-11-28
 
 ### Changed

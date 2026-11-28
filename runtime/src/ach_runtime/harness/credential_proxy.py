@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """ACH credential proxy for a HermesAgent.
 
-Hermes runs in a sandbox that holds no ACH credential. It sends its model (`/v1/...`) and MCP
-(`/mcp/...`) requests here with a per-HermesAgent bearer; the proxy checks it, replaces it with
+Hermes runs in a sandbox that holds no ACH credential. It sends its model (`/v1/...`), MCP
+(`/mcp/...`) and A2A-as-MCP (`/a2a/<agent>/mcp`) requests here with a per-HermesAgent bearer; the proxy checks it, replaces it with
 the ACH credential (`KeySource`: static ek_ or exchanged JWT, rotated) and streams the request
 to ACH unchanged otherwise.
 
-At every start Hermes downloads `/hermes/bundle`: its config.yaml and skills, hydrated from the
-ACH Environment as an Agent's are. The keys ACH writes are ACH's and are rewritten every time;
-what spec.config adds beside them is kept.
+At every start Hermes downloads `/hermes/bundle`: its config.yaml, skills and instructions, hydrated
+from the ACH Environment as an Agent's are, and `hermes_start.py`, which puts the instructions into
+SOUL.md. What ACH writes is ACH's and is rewritten every time; what spec.config adds beside it is kept.
 """
 
 from __future__ import annotations
@@ -39,15 +39,16 @@ from ach_runtime.harness.keys import Exchange, KeySource
 
 log = logging.getLogger(__name__)
 
-PREFIXES = ("/v1/", "/mcp/")
+PREFIXES = ("/v1/", "/mcp/", "/a2a/")
 # Hermes expands ${VAR} in config.yaml; the sandbox sets these.
 PROXY_URL, PROXY_TOKEN = "${ACH_PROXY_URL}", "${ACH_PROXY_TOKEN}"
 ACH_SKILLS = "ach-skills"
 
 
-def render_hermes_config(user: dict[str, Any], catalog: HydratedCatalog, base_url: str, instructions: str) -> dict[str, Any]:
+def render_hermes_config(user: dict[str, Any], catalog: HydratedCatalog, base_url: str) -> dict[str, Any]:
     """Hermes' config.yaml: spec.config with the ACH-owned keys (model, the Environment's MCP
-    servers, the ACH skills directory, the Environment's instructions) set on top."""
+    servers and A2A agents, the ACH skills directory) set on top. ACH serves an A2A agent as an MCP
+    server at <its endpoint>/mcp."""
     config = copy.deepcopy(user)
     model = {"provider": "custom", "base_url": f"{PROXY_URL}/v1", "api_key": PROXY_TOKEN, "default": catalog.model.id}
     metadata = catalog.model.metadata
@@ -57,39 +58,46 @@ def render_hermes_config(user: dict[str, Any], catalog: HydratedCatalog, base_ur
 
     servers = dict(config.get("mcp_servers") or {})
     ach_host = urlsplit(base_url).netloc
-    for server in catalog.mcp_servers:
-        endpoint = urlsplit(server.endpoint or f"/mcp/{server.id}")
-        if endpoint.netloc not in ("", ach_host) or not endpoint.path.startswith("/mcp/"):
-            log.warning("MCP server %s is not served by ACH at %s: not configured", server.id, ach_host)
+    entries = [(s.id, s.endpoint or f"/mcp/{s.id}", "/mcp/") for s in catalog.mcp_servers]
+    entries += [(a.id, (a.endpoint or f"/a2a/{a.id}").rstrip("/") + "/mcp", "/a2a/") for a in catalog.a2a_agents]
+    for name, url, prefix in entries:
+        endpoint = urlsplit(url)
+        if endpoint.netloc not in ("", ach_host) or not endpoint.path.startswith(prefix):
+            log.warning("%s is not served by ACH at %s: not configured", name, ach_host)
             continue
-        servers[server.id] = {"url": PROXY_URL + endpoint.path, "headers": {"Authorization": f"Bearer {PROXY_TOKEN}"}}
+        servers[name] = {"url": PROXY_URL + endpoint.path, "headers": {"Authorization": f"Bearer {PROXY_TOKEN}"}}
     config["mcp_servers"] = servers
 
     skills = dict(config.get("skills") or {})
     ach_dir = "${HERMES_HOME}/" + ACH_SKILLS
     skills["external_dirs"] = [d for d in skills.get("external_dirs") or [] if d != ach_dir] + [ach_dir]
     config["skills"] = skills
-
-    if instructions:
-        config["agent"] = {**(config.get("agent") or {}), "system_prompt": instructions}
     return config
 
 
 async def build_bundle(catalog: HydratedCatalog, base_url: str, user: dict[str, Any], client: httpx.AsyncClient) -> bytes:
-    """A tar.gz for HERMES_HOME: config.yaml (as JSON, which is YAML) and ach-skills/."""
+    """A tar.gz for HERMES_HOME: config.yaml (as JSON, which is YAML), ach-skills/, and .ach/ with
+    the instructions and the start script that merges them into SOUL.md."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         await stage_context(catalog, root, excluded_skills=(), client=client)
-        # An Environment's instructions, by name, as an Agent appends them.
-        instructions = "\n\n".join(
-            p.read_text(encoding="utf-8") for p in sorted((root / "instructions").glob("*/*")) if p.is_file()
-        )
-        config = json.dumps(render_hermes_config(user, catalog, base_url, instructions), indent=1).encode()
+        # One section per instruction, by name, in the order an Agent appends them.
+        sections = []
+        for item in sorted(p for p in (root / "instructions").glob("*") if p.is_dir()):
+            text = "\n\n".join(f.read_text(encoding="utf-8").strip() for f in sorted(item.iterdir()) if f.is_file())
+            if text:
+                sections.append(f"## {item.name}\n\n{text}")
+        files = {
+            "config.yaml": json.dumps(render_hermes_config(user, catalog, base_url), indent=1).encode(),
+            ".ach/instructions.md": "\n\n".join(sections).encode(),
+            ".ach/start.py": Path(__file__).with_name("hermes_start.py").read_bytes(),
+        }
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-            info = tarfile.TarInfo("config.yaml")
-            info.size = len(config)
-            tar.addfile(info, io.BytesIO(config))
+            for name, data in files.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
             (root / "skills").mkdir(exist_ok=True)
             tar.add(root / "skills", arcname=ACH_SKILLS)
         return buffer.getvalue()

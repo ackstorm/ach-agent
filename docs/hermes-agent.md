@@ -37,23 +37,25 @@ spec:
 
 ## Hydration
 
-At every sandbox start Hermes downloads its `config.yaml` and `ach-skills/` from the proxy, which hydrates the
-Environment then. The keys ACH writes are ACH's and are rewritten every start; what `spec.config` adds beside them
+At every sandbox start Hermes downloads its `config.yaml`, `ach-skills/` and `.ach/` from the proxy, which
+hydrates the Environment then, and runs `.ach/start.py` before the gateway. The keys ACH writes are ACH's and are rewritten every start; what `spec.config` adds beside them
 is kept:
 
 | From the Environment | In Hermes |
 |---|---|
 | the model `spec.ach.model.name` | `model` (provider `custom`, through the proxy; `context_length` from the model's metadata) |
 | `mcpServers` | one `mcp_servers` entry each, through the proxy |
+| `a2aAgents` | one `mcp_servers` entry each, at ACH's `/a2a/<agent>/mcp` (a `send_message` tool), through the proxy |
 | `skills`, `plugins` (their skills only) | `skills.external_dirs` → `$HERMES_HOME/ach-skills`; skills Hermes writes itself stay in its home |
-| `instructions` | `agent.system_prompt` |
-| `a2aAgents` | none: Hermes has no A2A client |
+| `instructions` | a block in `SOUL.md`, one section per instruction by name |
 
 An Environment change reaches Hermes at its next start. A change to `spec` or to a value of `spec.secretRef`
 replaces the sandbox (checked every 30 s); the PVC stays. Deleting the HermesAgent deletes the sandbox and the PVC.
 
-Hermes applies `agent.system_prompt` only while no `display.personality` is set: choosing a personality from chat
-replaces the Environment's instructions.
+Hermes has no list of instruction files like opencode's. `SOUL.md` is the only context file it loads for both chat
+and cron turns and trusts (a prompt-injection match warns instead of dropping the file), so the instructions go there,
+between `<!-- ach:instructions -->` markers. The block is rewritten every start; the rest of `SOUL.md` (Hermes'
+default text, or yours) is kept. On a fresh PVC with instructions, `start.py` seeds Hermes' default text first.
 
 Messaging platforms need an egress rule in `spec.sandbox.openshell.policy`, with `tls: NETWORK_TLS_MODE_SKIP`
 (Hermes does not trust the supervisor's re-signing CA), as in the example above.

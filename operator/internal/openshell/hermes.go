@@ -26,12 +26,12 @@ const (
 	// downloads the hydrated bundle (config.yaml, ach-skills/, .ach/) from the credential proxy with
 	// Hermes' own interpreter (the one binary the reserved rule admits), runs .ach/start.py, which
 	// merges the Environment's instructions into SOUL.md, then starts the gateway. A failed step
-	// exits and the gateway restarts the sandbox.
+	// exits and the gateway restarts the sandbox. A proxy older than start.py serves no .ach/.
 	hermesCommand = `rm -rf "$HERMES_HOME/ach-skills" "$HERMES_HOME/.ach" && mkdir -p "$HERMES_HOME" "$HOME" && ` +
 		`/opt/hermes/.venv/bin/python -c "import os,io,tarfile,urllib.request as u; ` +
 		`r=u.Request(os.environ['ACH_PROXY_URL']+'/hermes/bundle', headers={'Authorization':'Bearer '+os.environ['ACH_PROXY_TOKEN']}); ` +
 		`tarfile.open(fileobj=io.BytesIO(u.urlopen(r,timeout=120).read())).extractall(os.environ['HERMES_HOME'], filter='data')" && ` +
-		`/opt/hermes/.venv/bin/python "$HERMES_HOME/.ach/start.py" && ` +
+		`{ [ ! -f "$HERMES_HOME/.ach/start.py" ] || /opt/hermes/.venv/bin/python "$HERMES_HOME/.ach/start.py"; } && ` +
 		`exec /opt/hermes/.venv/bin/hermes gateway run`
 )
 
